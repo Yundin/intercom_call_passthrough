@@ -14,7 +14,9 @@ import os
 import sys
 import signal
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 import requests
 from dotenv import load_dotenv
@@ -29,6 +31,17 @@ def parse_iso_timestamp(ts_str: str) -> datetime:
     """Parse ISO timestamp with timezone and convert to UTC."""
     # Format: 2026-05-26T22:22:17+05:00
     return datetime.fromisoformat(ts_str).astimezone(timezone.utc)
+
+
+@dataclass
+class CallHistoryResult:
+    """Результат запроса истории вызовов."""
+    data: Optional[dict] = None
+    error_type: Optional[str] = None  # None="success", "server"=5xx, "network"=connection error
+
+    @property
+    def is_success(self) -> bool:
+        return self.error_type is None
 
 
 class UfanetAuth:
@@ -54,18 +67,24 @@ class UfanetAuth:
             print(f"[{ts()}] Ошибка получения access token: {e}")
             return None
 
-    def get_call_history(self, access_token):
+    def get_call_history(self, access_token) -> CallHistoryResult:
         """Получение истории вызовов."""
         url = "https://dom.ufanet.ru/api/v1/skuds/call-history/"
         self.session.headers.update({"Authorization": f"JWT {access_token}"})
 
         try:
             response = self.session.get(url)
-            response.raise_for_status()
-            return response.json()
+            if 400 <= response.status_code < 500:
+                # 4xx errors likely mean expired token
+                print(f"[{ts()}] Auth error: {response.status_code}")
+                return CallHistoryResult(error_type="auth")
+            if 500 <= response.status_code < 600:
+                print(f"[{ts()}] Server error: {response.status_code}")
+                return CallHistoryResult(error_type="server")
+            return CallHistoryResult(data=response.json())
         except requests.RequestException as e:
-            print(f"[{ts()}] Ошибка получения истории вызовов: {e}")
-            return None
+            print(f"[{ts()}] Network error: {e}")
+            return CallHistoryResult(error_type="network")
 
 
 class CallHistoryWatcher:
@@ -177,14 +196,19 @@ def main():
         watcher.request_count += 1
         result = auth.get_call_history(access_token)
 
-        if result is None:
-            # Token might be expired, force refresh
-            print(f"[{ts()}] [Ошибка] Не удалось получить историю, обновляю токен...")
+        if result.error_type == "auth":
+            # 4xx - token likely expired, refresh
+            print(f"[{ts()}] [Ошибка] Токен истёк, обновляю...")
             access_token = None
             time.sleep(poll_interval)
             continue
 
-        calls = result.get("results", [])
+        if result.error_type in ("server", "network"):
+            # Transient error - retry with same token
+            time.sleep(poll_interval)
+            continue
+
+        calls = result.data.get("results", [])
         if isinstance(calls, list):
             watcher.process_calls(calls)
 

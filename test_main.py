@@ -11,6 +11,7 @@ from main import (
     parse_iso_timestamp,
     UfanetAuth,
     CallHistoryWatcher,
+    CallHistoryResult,
 )
 
 
@@ -210,6 +211,7 @@ class TestUfanetAuth:
         mock_session_class.return_value = mock_session
 
         mock_response = Mock()
+        mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
         mock_response.json = Mock(return_value={"results": []})
         mock_session.get = Mock(return_value=mock_response)
@@ -217,11 +219,12 @@ class TestUfanetAuth:
         auth = UfanetAuth("user", "pass")
         result = auth.get_call_history("test_token")
 
-        assert result == {"results": []}
+        assert result.is_success
+        assert result.data == {"results": []}
 
     @patch('requests.Session')
-    def test_get_call_history_failure(self, mock_session_class):
-        """Ошибка при получении истории."""
+    def test_get_call_history_network_error(self, mock_session_class):
+        """Ошибка сети должна возвращать CallHistoryResult с error_type='network'."""
         mock_session = MagicMock()
         mock_session.get = Mock(side_effect=requests.RequestException("Network error"))
         mock_session_class.return_value = mock_session
@@ -229,7 +232,38 @@ class TestUfanetAuth:
         auth = UfanetAuth("user", "pass")
         result = auth.get_call_history("test_token")
 
-        assert result is None
+        assert not result.is_success
+        assert result.error_type == "network"
+
+    @patch('requests.Session')
+    def test_get_call_history_server_error(self, mock_session_class):
+        """5xx ошибка должна возвращать CallHistoryResult с error_type='server'."""
+        mock_session = MagicMock()
+        mock_response = Mock()
+        mock_response.status_code = 503
+        mock_session.get = Mock(return_value=mock_response)
+        mock_session_class.return_value = mock_session
+
+        auth = UfanetAuth("user", "pass")
+        result = auth.get_call_history("test_token")
+
+        assert not result.is_success
+        assert result.error_type == "server"
+
+    @patch('requests.Session')
+    def test_get_call_history_auth_error(self, mock_session_class):
+        """4xx ошибка должна возвращать CallHistoryResult с error_type='auth'."""
+        mock_session = MagicMock()
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_session.get = Mock(return_value=mock_response)
+        mock_session_class.return_value = mock_session
+
+        auth = UfanetAuth("user", "pass")
+        result = auth.get_call_history("test_token")
+
+        assert not result.is_success
+        assert result.error_type == "auth"
 
 
 class TestIntegration:
