@@ -76,10 +76,10 @@ class UfanetAuth:
             response = self.session.get(url)
             if 400 <= response.status_code < 500:
                 # 4xx errors likely mean expired token
-                print(f"[{ts()}] Auth error: {response.status_code}")
+                print(f"[{ts()}] Auth error: {response.status_code}, body: {response.text}")
                 return CallHistoryResult(error_type="auth")
             if 500 <= response.status_code < 600:
-                print(f"[{ts()}] Server error: {response.status_code}")
+                print(f"[{ts()}] Server error: {response.status_code}, body: {response.text}")
                 return CallHistoryResult(error_type="server")
             return CallHistoryResult(data=response.json())
         except requests.RequestException as e:
@@ -144,7 +144,7 @@ class CallHistoryWatcher:
             if 200 <= response.status_code < 300:
                 pass  # успех
             else:
-                print(f"Ошибка webhook: Статус {response.status_code}")
+                print(f"Ошибка webhook: Статус {response.status_code}, body: {response.text}")
         except requests.RequestException as e:
             print(f"Ошибка отправки webhook: {e}")
 
