@@ -98,6 +98,10 @@ class CallHistoryWatcher:
         self.request_count = 0
         self.last_no_calls_log_time = None
 
+    def on_request_error(self):
+        """Вызывается после сетевой ошибки, чтобы сбросить таймаут логирования."""
+        self.last_no_calls_log_time = None
+
     def process_calls(self, calls):
         """Обработать список звонков, отправить webhook для новых."""
         # Находим все новые звонки (новее last_processed_time)
@@ -205,6 +209,7 @@ def main():
 
         if result.error_type in ("server", "network"):
             # Transient error - retry with same token
+            watcher.on_request_error()
             time.sleep(poll_interval)
             continue
 

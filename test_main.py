@@ -364,6 +364,56 @@ class TestEdgeCases:
         with pytest.raises(KeyError):
             watcher.process_calls(calls)
 
+    def test_no_calls_log_once_per_five_minutes(self, capsys):
+        """'Новых звонков нет' должен появляться не чаще 1 раза в 5 минут."""
+        watcher = CallHistoryWatcher("http://test.local")
+
+        # Первый пустой вызов
+        watcher.process_calls([])
+        out1 = capsys.readouterr().out
+        assert "Новых звонков нет" in out1
+
+        # Второй пустой вызов сразу - не должен логировать
+        watcher.process_calls([])
+        out2 = capsys.readouterr().out
+        assert "Новых звонков нет" not in out2
+
+    @patch('main.requests.post')
+    def test_logs_appear_after_new_calls(self, mock_post, capsys):
+        """При новых звонках должно появиться 'Получено звонков'."""
+        mock_post.return_value = Mock(status_code=200)
+        watcher = CallHistoryWatcher("http://test.local")
+
+        # Сначала пустой вызов (устанавливает last_no_calls_log_time)
+        watcher.process_calls([])
+        capsys.readouterr()  # очищаем
+
+        # Затем новый звонок - должно появиться "Получено звонков"
+        new_time = datetime.now(timezone.utc)
+        calls = [{"called_at": new_time.strftime('%Y-%m-%dT%H:%M:%S+00:00'), "flat": "42", "address": "Test"}]
+        watcher.process_calls(calls)
+        out = capsys.readouterr().out
+        assert "Получено звонков: 1" in out
+        assert "Новых звонков нет" not in out  # не должен писать это
+
+    def test_empty_calls_log_after_error(self, capsys):
+        """Первый пустой вызов после ошибки должен логироваться."""
+        watcher = CallHistoryWatcher("http://test.local")
+
+        # Первый пустой вызов -> логируется (инициализация)
+        watcher.process_calls([])
+        out1 = capsys.readouterr().out
+        assert "Получено звонков: 0" in out1
+
+        # Симулируем ошибку - просто не вызываем process_calls
+        # (имитация сетевой ошибки)
+
+        # Второй пустой вызов после "ошибки" -> должен залогироваться
+        watcher.on_request_error()  # сброс таймера
+        watcher.process_calls([])
+        out2 = capsys.readouterr().out
+        assert "Получено звонков: 0" in out2
+
     def test_watcher_initialization_with_custom_lookback(self):
         """Инициализация с кастомным lookback."""
         watcher = CallHistoryWatcher("http://webhook.local", lookback_seconds=120)
